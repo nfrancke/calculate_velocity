@@ -1,18 +1,9 @@
 /*****************************************************************************************************************************************
 Function: 
-This program responds on the receiving of a Float32MultiArray message on topic written in define variable "TOPIC_NAME.
-The only data that this program will read is data[4], data[6] and data[7]. This is because serial port 5,7,8 will be written.
-When the program can't open a serial port the program will be shut down. 
-For debugging it is recommend to set the "log level" of ROS to -> DEBUG. normally it is setted to INFO.
+This function will convert a vector message x,y and angular z into RPM values for 3 omniwheels.
 
-Pre:
-A "ros param" that descibes the factor between the incomming array (RPM) and the sending velocity to the motordrivers.
-two "ros params" that describe the minimum and the maximum of the velocity that will be send to the motordrivers. NOTE: this is no RPM!!!
+The following coordinate system will be used for the robot(Turtle5k)
 
-Post:
-rs422 message on serial bus 5, 6 and 7 that gives the speed in pulses per time sample. The exact message can be found in the outputbuffer.
-
-coordinate system:
 shooting system is on the x-axe
 
 		^x
@@ -20,8 +11,14 @@ shooting system is on the x-axe
 		|
 	   zX----->y
 
+Pre:
+Twist message on topic motorspeed_set
+
+Post:
+Float32Multiarray on topic mcWheelVelocityMps. THe 3 rpm values for the motor will be written in array[5], array[7] and array[8]
+
 Writer 		: Niek Francke
-date 		: 17-11-2015
+date 		: 18-11-2015
 ********************************************************************************************************************************************/
 
 #include <iostream>
@@ -36,12 +33,13 @@ date 		: 17-11-2015
 //-----settings
 #define PUBLISH_TOPIC_NAME 			"mcWheelVelocityMps"
 #define SUBSCRIBE_TOPIC_NAME		"motorspeed_set"
-#define TOPIC_BUFFER_SIZE			1
+#define SUBSCRIBE_TOPIC_BUFFER_SIZE	1
+#define PUBLISH_TOPIC_BUFFER_SIZE	1
 #define ANGLE_1						0 	//degrees
 #define ANGLE_2						120 //degrees
 #define ANGLE_3						240 //degrees
 #define THETA						30	//degrees
-#define RADIUS_OMNI_WHEEL			0.1016 //meter
+#define RADIUS_OMNI_WHEEL			0.1016/2 //meter
 #define RADIUS_DRIVING_SYSTEM		0.22 //meter
 
 using namespace std;
@@ -54,60 +52,84 @@ class PublishAndSubscribe
 public:
 	
 	///////////////////////////////////////////////////////////////////////////////////////////
-	//Function: create class and read params
+	//Function: create class
 	//pre: 	-
-	//post: iConvertFactor will be 0 if there is no param readed.
+	//post: -
 	///////////////////////////////////////////////////////////////////////////////////////////
 	PublishAndSubscribe(ros::NodeHandle nh)
 	{
-		sub = nh.subscribe(SUBSCRIBE_TOPIC_NAME,TOPIC_BUFFER_SIZE, &PublishAndSubscribe::twistMessageReceived, this);
-		pub = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_TOPIC_NAME,1);
+		sub = nh.subscribe(SUBSCRIBE_TOPIC_NAME,SUBSCRIBE_TOPIC_BUFFER_SIZE, &PublishAndSubscribe::twistMessageReceived, this);
+		pub = nh.advertise<std_msgs::Float32MultiArray>(PUBLISH_TOPIC_NAME,PUBLISH_TOPIC_BUFFER_SIZE);
+
+		ROS_INFO("calculate_velocity_node is initialized");
 	}
 	
 	/////////////////////////////////////////////////////////////////////////////
-	//function: this function responds on a float32MultiArray message.
-	//pre: values for array places 4,6,7, because the serial ports are 5,7 and 8
-	//post: -
+	//function: this function responds on a Twist message.
+	//pre: linear values in m/s en angular values in rad/s.
+	//post: there will be an Float32MultiArray send on a topic. In this array the RPM's per motor will be defined.
 	/////////////////////////////////////////////////////////////////////////////
 	void twistMessageReceived(const geometry_msgs::Twist::ConstPtr& msg)
 	{
+		ROS_INFO_ONCE("Received a twist message for the first time.");
+
+		//linear values out of twist messages.
 		float fX = msg->linear.x;
 		float fY = msg->linear.y;
 		float fOmega = msg->angular.z;
 
+		//Debug messages.
 		ROS_DEBUG("x = %f", fX);
 		ROS_DEBUG("y = %f", fY);
 		ROS_DEBUG("omega = %f", fOmega);
 
+		//convert degree values in to radian value's
 		float fAngle1 = ((float)ANGLE_1/180)*M_PI;
 		float fAngle2 = ((float)ANGLE_2/180)*M_PI;
 		float fAngle3 = ((float)ANGLE_3/180)*M_PI;
 		float fTheta  = ((float)THETA/180)*M_PI;
 
+		//Debug messages
 		ROS_DEBUG("angle1 is %f  pi radians and %i degrees" ,(fAngle1/M_PI), ANGLE_1);
 		ROS_DEBUG("angle2 is %f pi radians and %i degrees" , (fAngle2/M_PI), ANGLE_2);
 		ROS_DEBUG("angle3 is %f pi radians and %i degrees" , (fAngle3/M_PI), ANGLE_3);
 		ROS_DEBUG("theta is %f pi radians and %i degrees" , (fTheta/M_PI), THETA);
+		float fRadiusOmniwheel = RADIUS_OMNI_WHEEL;	//this is needed, because the define won't work in a formule. (i don't know why)
+		ROS_DEBUG("radius omni wheel: %f", fRadiusOmniwheel);	
 
 		float fSpeedWheel[10];
 
-		//uitleg functie
-		//fSpeedWheel[7] = (-sin(fTheta)*cos(fTheta)*fY + (cos(fTheta) * cos(fTheta))*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/RADIUS_OMNI_WHEEL; 
-		//fSpeedWheel[5] = (-sin(fTheta + fAngle2)*cos(fTheta)*fY + (cos(fTheta + fAngle2) * cos(fTheta))*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/RADIUS_OMNI_WHEEL;
-		//fSpeedWheel[8] = (-sin(fTheta + fAngle3)*cos(fTheta)*fY + (cos(fTheta + fAngle3) * cos(fTheta))*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/RADIUS_OMNI_WHEEL;
+		//convert the x, y and angular z values in the 3 omniwheel speed values.
+		//Vwheel = Vlinear + Vangular
+		//Vlinear = -sin(theta + a1)*y + cos(thetha + a1)*x
+		//Vangular = Radius * omega
+		fSpeedWheel[7] = (-sin(fTheta + fAngle1)*fY + (cos(fTheta + fAngle1))*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/fRadiusOmniwheel; 
+		fSpeedWheel[5] = (-sin(fTheta + fAngle2)*fY + (cos(fTheta + fAngle2))*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/fRadiusOmniwheel;
+		fSpeedWheel[8] = (-sin(fTheta + fAngle3)*fY + (cos(fTheta + fAngle3))*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/fRadiusOmniwheel;
 
-		fSpeedWheel[7] = (-sin(fTheta + fAngle1)*fY + (cos(fTheta + fAngle1)*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/RADIUS_OMNI_WHEEL; 
-		fSpeedWheel[5] = (-sin(fTheta + fAngle2)*fY + (cos(fTheta + fAngle2)*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/RADIUS_OMNI_WHEEL;
-		fSpeedWheel[8] = (-sin(fTheta + fAngle3)*fY + (cos(fTheta + fAngle3)*fX + RADIUS_DRIVING_SYSTEM*(-fOmega))/RADIUS_OMNI_WHEEL;
+		//Debug messages
+		ROS_DEBUG("speed wheel 1 rad/s = %f", fSpeedWheel[7]);
+		ROS_DEBUG("speed wheel 2 rad/s = %f", fSpeedWheel[5]);
+		ROS_DEBUG("speed wheel 3 rad/s = %f", fSpeedWheel[8]);
 
-		ROS_DEBUG("speed wheel 1 = %f", fSpeedWheel[7]);
-		ROS_DEBUG("speed wheel 2 = %f", fSpeedWheel[5]);
-		ROS_DEBUG("speed wheel 3 = %f", fSpeedWheel[8]);
+		//convert rad/s to radian
+		//RPM = rad * 60/2pi
+		for(int i = 0 ; i < 10 ; i++){
+			fSpeedWheel[i] = fSpeedWheel[i] * (60 / ( 2 * M_PI));
+		}
 
+		//Debug messages
+		ROS_DEBUG("speed wheel 1 RPM = %f", fSpeedWheel[7]);
+		ROS_DEBUG("speed wheel 2 RPM = %f", fSpeedWheel[5]);
+		ROS_DEBUG("speed wheel 3 RPM = %f", fSpeedWheel[8]);
+
+		//Define output message (Float32MultiArray)
 		std_msgs::Float32MultiArray msg_out;
 
+		//Clear data. If you don't don't use this function the array won't start again on number 0 with filling new data.
 		msg_out.data.clear();
 
+		//define data. Set RPM in output message
       	msg_out.data.push_back(0);
 	    msg_out.data.push_back(0);
 	    msg_out.data.push_back(0);
@@ -119,8 +141,8 @@ public:
 	    msg_out.data.push_back(0);
 	    msg_out.data.push_back(0);
 
+	    //Send message
 	    pub.publish(msg_out);
-
 	}
 
 private:
@@ -153,10 +175,4 @@ int main(int argc, char **argv  )
 
 /*****************************************************************************************************************************************
 End of main
-********************************************************************************************************************************************/
-/*****************************************************************************************************************************************
-Functions
-********************************************************************************************************************************************/
-/*****************************************************************************************************************************************
-End of functions
 ********************************************************************************************************************************************/
