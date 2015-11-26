@@ -31,15 +31,15 @@ date 		: 18-11-2015
 #include <math.h>
 
 //-----settings
-#define PUBLISH_TOPIC_NAME 			"mcWheelVelocityMps"
-#define SUBSCRIBE_TOPIC_NAME		"motorspeed_set"
+#define PUBLISH_TOPIC_NAME 		"mcWheelVelocityMps"
+#define SUBSCRIBE_TOPIC_NAME		"mcWheelVelocityTwist"
 #define SUBSCRIBE_TOPIC_BUFFER_SIZE	1
 #define PUBLISH_TOPIC_BUFFER_SIZE	1
-#define ANGLE_1						0 	//degrees
-#define ANGLE_2						120 //degrees
-#define ANGLE_3						240 //degrees
-#define THETA						30	//degrees
-#define RADIUS_OMNI_WHEEL			0.1016/2 //meter
+#define ANGLE_1				0 	//degrees
+#define ANGLE_2				120 //degrees
+#define ANGLE_3				240 //degrees
+#define THETA				30	//degrees
+#define RADIUS_OMNI_WHEEL		0.1016/2 //meter
 #define RADIUS_DRIVING_SYSTEM		0.22 //meter
 
 using namespace std;
@@ -130,7 +130,7 @@ public:
 		msg_out.data.clear();
 
 		//define data. Set RPM in output message
-      	msg_out.data.push_back(0);
+		msg_out.data.push_back(0);
 	    msg_out.data.push_back(0);
 	    msg_out.data.push_back(0);
 	    msg_out.data.push_back(0);
